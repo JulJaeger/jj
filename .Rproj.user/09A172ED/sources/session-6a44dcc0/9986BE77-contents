@@ -1,0 +1,467 @@
+---
+title: "Lung cancer in urbanized high-CO2-emission settings"
+format: 
+  dashboard:
+    embed-resources: true
+theme: lux
+---
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, outbreaks, bslib, bsicons, shiny, 
+               plotly, htmltools,
+               reactable,gapminder, 
+               countrycode, 
+               reactable, gganimate,
+               sf, rnaturalearth, scales)
+
+```
+
+```{r}
+
+cases_men_years <- read.csv("lung_cancer_new_cases_per_100000_men.csv") %>% 
+  select(-c(2:38))
+
+cases_women_years <- read.csv("lung_cancer_new_cases_per_100000_women.csv") %>% 
+  select(-c(2:38))
+
+cases_men <- read.csv("lung_cancer_new_cases_per_100000_men.csv") %>% 
+  select(country, X2019)
+
+cases_women <- read.csv("lung_cancer_new_cases_per_100000_women.csv") %>% 
+  select(country, X2019)
+
+urban_pop <- read.csv("urban_population.csv")
+
+emission <- read.csv("cumulative_co2_emissions_tonnes.csv")
+```
+
+```{r}
+
+cases_total <- left_join(
+  cases_men, cases_women, by = c("country")) %>% 
+  mutate(total = X2019.x + X2019.y)
+
+```
+
+```{r}
+emission <- emission %>%
+  rename_with(
+    ~ str_replace(., "^X", "em"),
+    .cols = starts_with("X")
+  ) %>%
+  select(-c(2:240))
+
+urban_pop <- urban_pop %>%
+  rename_with(
+    ~ str_replace(., "^X", "pop"),
+    .cols = starts_with("X")
+  ) %>%
+  select(-c(2:31))
+
+# Emissions: em1990–em2019 → year, emissions
+emission <- emission %>%
+  pivot_longer(
+    cols = starts_with("em"),
+    names_to = "year",
+    names_prefix = "em",
+    names_transform = list(year = as.integer),
+    values_to = "emissions"
+  )
+
+# Urban population: pop1990–pop2019 → year, urban_pop
+urban_pop <- urban_pop %>%
+  pivot_longer(
+    cols = starts_with("pop"),
+    names_to = "year",
+    names_prefix = "pop",
+    names_transform = list(year = as.integer),
+    values_to = "urban_pop"
+  )
+```
+
+```{r}
+
+# New cases highest and lowest 
+# Value
+cases_high <- cases_total %>% 
+  select(country, total) %>% 
+  arrange(-total) %>% 
+  head(1) %>% 
+  pull(total) %>% 
+  round(1)
+
+cases_low <- cases_total %>% 
+  select(country, total) %>% 
+  arrange(total) %>% 
+  head(1) %>% 
+  pull(total) %>% 
+  round(1)
+
+# Country
+cases_high_country <- cases_total %>% 
+  select(country, total) %>% 
+  arrange(-total) %>% 
+  head(1) %>% 
+  pull(country) 
+
+cases_low_country <- cases_total %>% 
+  select(country, total) %>% 
+  arrange(total) %>% 
+  head(1) %>% 
+  pull(country)
+
+```
+
+```{r}
+world <- rnaturalearth::ne_countries(scale = 110, returnclass = "sf")
+
+# setdiff(world$name, cases_total$country)
+# setdiff(cases_total$country, world$name)
+
+name_corrections <- c(
+  "USA" = "United States of America",
+  "UK" = "United Kingdom",
+  "Czech Republic" = "Czechia",
+  "Slovak Republic" = "Slovakia",
+  "Cote d'Ivoire" = "Côte d'Ivoire",
+  "South Sudan" = "S. Sudan",
+  "Equatorial Guinea" = "Eq. Guinea",
+  "Congo, Dem. Rep." = "Dem. Rep. Congo",
+  "Republic of the Congo" = "Congo",
+  "Dominican Republic" = "Dominican Rep.",
+  "Ivory Coast" = "Côte d'Ivoire",
+  "Eswatini" = "eSwatini",
+  "Lao" = "Laos",
+  "United Arab Emirates" = "UAE",
+  "Bosnia and Herzegovina" = "Bosnia and Herz.",
+  "Solomon Islands" = "Solomon Is.",
+  "Kyrgyz Republic" = "Kyrgyzstan"
+)
+
+cases_total$country <- dplyr::recode(cases_total$country, !!!name_corrections)
+
+# Plot it
+map <- ggplot() +
+  geom_sf(data = world) +  # base layer
+  geom_sf(
+    data = world %>%
+      mutate(country = countrycode(name, "country.name", "country.name")) %>%
+      left_join(cases_total, by = c("name" = "country")),
+    aes(fill = total, text = paste0(country, ": ", total))
+  ) +
+  scale_fill_gradient(low = "#2ECC71", high = "#3498DB",na.value = "grey90", name = "Cases per 100k") +
+  theme_void() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+# Men
+# Emissions: em2000–em2019 → year, emissions
+
+top10_countries_2019 <- cases_men_years %>%
+  arrange(desc(X2019)) %>%
+  slice_head(n = 10) %>%
+  pull(country)
+
+cases_men_top10 <- cases_men_years %>%
+  filter(country %in% top10_countries_2019)
+
+
+cases_men_top10 <- cases_men_top10 %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year",
+    names_prefix = "X",
+    names_transform = list(year = as.integer),
+    values_to = "cancer_cases"
+  )
+
+bubble_men <- emission %>%
+  inner_join(urban_pop, by = c("country", "year")) %>%
+  inner_join(cases_men_top10, by = c("country", "year"))
+
+bubble_men <- bubble_men %>%
+  mutate(
+    emissions = as.numeric(emissions),
+    urban_pop = as.numeric(urban_pop)
+  )
+
+bubble_men <- bubble_men %>%
+  mutate(
+    emissions = case_when(
+      grepl("k", emissions, ignore.case = TRUE) ~ as.numeric(gsub("k", "", emissions, ignore.case = TRUE)) * 1e3,
+      grepl("M", emissions, ignore.case = TRUE) ~ as.numeric(gsub("M", "", emissions, ignore.case = TRUE)) * 1e6,
+      grepl("B", emissions, ignore.case = TRUE) ~ as.numeric(gsub("B", "", emissions, ignore.case = TRUE)) * 1e9,
+      TRUE ~ as.numeric(emissions)
+    ),
+    urban_pop = case_when(
+      grepl("k", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("k", "", urban_pop, ignore.case = TRUE)) * 1e3,
+      grepl("M", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("M", "", urban_pop, ignore.case = TRUE)) * 1e6,
+      grepl("B", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("B", "", urban_pop, ignore.case = TRUE)) * 1e9,
+      TRUE ~ as.numeric(urban_pop)
+    )
+  )
+
+```
+
+```{r}
+# Women
+
+# Cancer cases: 2000–2019 → year, cancer_cases
+
+top10_countries_2019 <- cases_women_years %>%
+  arrange(desc(X2019)) %>%
+  slice_head(n = 10) %>%
+  pull(country)
+
+cases_women_top10 <- cases_women_years %>%
+  filter(country %in% top10_countries_2019)
+
+cases_women_top10 <- cases_women_top10 %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year",
+    names_prefix = "X",
+    names_transform = list(year = as.integer),
+    values_to = "cancer_cases"
+  )
+
+bubble_women <- emission %>%
+  inner_join(urban_pop, by = c("country", "year")) %>%
+  inner_join(cases_women_top10, by = c("country", "year"))
+
+bubble_women <- bubble_women %>%
+  mutate(
+    emissions = case_when(
+      grepl("k", emissions, ignore.case = TRUE) ~ as.numeric(gsub("k", "", emissions, ignore.case = TRUE)) * 1e3,
+      grepl("M", emissions, ignore.case = TRUE) ~ as.numeric(gsub("M", "", emissions, ignore.case = TRUE)) * 1e6,
+      grepl("B", emissions, ignore.case = TRUE) ~ as.numeric(gsub("B", "", emissions, ignore.case = TRUE)) * 1e9,
+      TRUE ~ as.numeric(emissions)
+    ),
+    urban_pop = case_when(
+      grepl("k", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("k", "", urban_pop, ignore.case = TRUE)) * 1e3,
+      grepl("M", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("M", "", urban_pop, ignore.case = TRUE)) * 1e6,
+      grepl("B", urban_pop, ignore.case = TRUE) ~ as.numeric(gsub("B", "", urban_pop, ignore.case = TRUE)) * 1e9,
+      TRUE ~ as.numeric(urban_pop)
+    )
+  )
+
+```
+
+```{r}
+# Top 20 CO₂ emitters in 2019
+emission_2019_top20 <- emission %>%
+  filter(year == 2019, !is.na(emissions)) %>%
+  mutate(
+    emissions = case_when(
+      grepl("k", emissions, ignore.case = TRUE) ~ as.numeric(gsub("k", "", emissions, ignore.case = TRUE)) * 1e3,
+      grepl("M", emissions, ignore.case = TRUE) ~ as.numeric(gsub("M", "", emissions, ignore.case = TRUE)) * 1e6,
+      grepl("B", emissions, ignore.case = TRUE) ~ as.numeric(gsub("B", "", emissions, ignore.case = TRUE)) * 1e9,
+      TRUE ~ as.numeric(emissions)
+    )
+  ) %>%
+  arrange(desc(emissions)) %>%
+  slice_head(n = 20)
+
+emission_country <- ggplot(emission_2019_top20, aes(x = reorder(country, emissions), y = emissions)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    x = "Country",
+    y = "Total Emissions"
+  ) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  theme_minimal()
+
+```
+
+# 🌍 Global lung cancer
+## {.sidebar width=20%}
+
+Air Pollution and lung cancer
+
+Outdoor air pollution is a major global health threat, with most people exposed to levels exceeding WHO guidelines. It’s strongly linked to lung cancer and may also impact other cancer types and survival. This dashboard reviews global exposure and cancer.
+
+<a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC7904962/" target="_blank">
+  <button style="padding: 8px 16px; background-color: #2ECC71; color: white; border: none; border-radius: 4px;">
+    Reference
+  </button>
+</a>
+
+
+## Column 2
+### Row 1 {height="20%"}
+
+```{r}
+
+value_box(
+  title = tags$div(
+    style = "font-size: 0.8em;",
+    "Highest cases per 100.000"
+  ),
+  value = tags$div(
+    style = "font-size: 1.3em;",
+    cases_high
+  ),
+  showcase = bsicons::bs_icon("lungs"),
+  theme = value_box_theme(bg = "#3498DB"),
+  p(paste0("(", cases_high_country, ")"))
+)
+
+```
+
+```{r}
+value_box(
+  title = tags$div(
+    style = "font-size: 0.8em;",
+    "Lowest cases per 100.000"
+  ),
+  value = tags$div(
+    style = "font-size: 1.3em;",
+    cases_low
+  ),
+  showcase = bsicons::bs_icon("clipboard-pulse"),
+  theme = value_box_theme(bg = "#2ECC71"),
+  p(paste0("(", cases_low_country, ")"))
+)
+
+
+```
+
+### Row 2 {height="80%"}
+#### {width=50%}
+
+```{r}
+
+color_scale <- colorRampPalette(c("#2ECC71", "#3498DB"))(100)
+
+total_vals <- cases_total$total  
+domain <- range(total_vals, na.rm = TRUE)
+
+reactable(
+  cases_total %>% select(country, total) %>% arrange(desc(total)),
+  columns = list(
+    country = colDef(name = "Country"),
+    total = colDef(
+      name = "Total Cases per 100,000",
+      style = function(value) {
+        index <- pmin(100, pmax(1, round(scales::rescale(value, to = c(1, 100),
+                                                         from = domain))))
+        list(
+          background = color_scale[index],
+          color = "white",
+          fontWeight = "bold"
+        )
+      }
+    )
+  ),
+  defaultPageSize = 10,
+  bordered = TRUE,
+  highlight = TRUE,
+  filterable = TRUE,
+  searchable = TRUE
+)
+
+```
+
+#### {width=50%}
+```{r title = "Map of Countries by Lung-Cancer Cases"}
+
+ggplotly(map, tooltip = "text")
+
+```
+
+# 🏙️ Emission and Urbanization
+
+## Row 1 {height="20%"}
+
+Urban population refers to people living in urban areas as defined by national statistical offices. It is calculated using World Bank population estimates and urban ratios from the United Nations World Urbanization Prosepcts. Aggregation of urban and rural population may not add up to total population because of different country coverages.
+
+## Row 2 {height="80%"}
+### {width=40%}
+
+```{r title = "Top 20 highest CO2 emission countries"}
+
+emission_country
+
+```
+
+### {.tabset}
+#### Women
+```{r}
+
+ggplot(bubble_women, aes(
+  x = cancer_cases,
+  y = emissions,
+  size = urban_pop,
+  color = country,
+  label = country
+)) +
+  geom_point(alpha = 0.7) +
+  scale_size(range = c(2, 15), name = "Urban Population") +
+  labs(
+    title = "Cancer Burden vs Emissions with Urbanization (Year: {frame_time})",
+    subtitle = "Bubble size represents Urban Population",
+    x = "Cancer Cases per 100,000 Women",
+    y = "CO₂ Emissions per Capita",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  transition_time(year) +
+  ease_aes("linear") +
+  scale_y_log10(
+    labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+    name = "CO₂ Emissions (log scale)"
+  ) +
+  guides(size = "none")
+
+```
+
+#### Men
+
+```{r}
+anim_men <- ggplot(bubble_men, aes(
+  x = cancer_cases,
+  y = emissions,
+  size = urban_pop,
+  color = country,
+  label = country
+)) +
+  geom_point(alpha = 0.7) +
+  scale_size(range = c(2, 15), name = "Urban Population") +
+  labs(
+    title = "Cancer Burden vs Emissions with Urbanization (Year: {frame_time})",
+    subtitle = "Bubble size represents Urban Population",
+    x = "Cancer Cases per 100,000 Men",
+    y = "CO₂ Emissions per Capita",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  transition_time(year) +
+  ease_aes("linear") +
+  scale_y_log10(
+    labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+    name = "CO₂ Emissions (log scale)"
+  ) +
+  guides(size = "none")
+
+anim_men
+
+```
+
+
+# 📊 Data
+
+<div class="alert alert-info" role="alert">
+  <strong>Source:</strong> The data used in this dashboard is provided by <a href="https://www.gapminder.org/" target="_blank">Gapminder</a>, an independent Swedish foundation that promotes a fact-based worldview through open access to global development statistics.
+</div>
+
+<div style="margin-top: 10px;">
+  <a class="btn btn-outline-primary" href="https://www.gapminder.org/data/" target="_blank">📁 Download Dataset</a>
+</div>
+
+
+
