@@ -4,6 +4,7 @@ format:
   dashboard:
     embed-resources: true
 theme: lux
+output-dir: docs
 ---
 
 ```{r}

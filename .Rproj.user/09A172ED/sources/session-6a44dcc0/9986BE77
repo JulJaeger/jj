@@ -3,7 +3,7 @@
     "path": "C:/Users/jucoj/Downloads/rmc_week_10_workshop (1)/final_project_jj/jj/final_project_jaeger.qmd",
     "project_path": "final_project_jaeger.qmd",
     "type": "quarto_markdown",
-    "hash": "0",
+    "hash": "777617213",
     "contents": "",
     "dirty": false,
     "created": 1751313787523.0,
@@ -11,14 +11,16 @@
     "relative_order": 1,
     "properties": {
         "source_window_id": "",
-        "Source": "Source"
+        "Source": "Source",
+        "cursorPosition": "8,0",
+        "scrollLine": "0"
     },
     "folds": "",
-    "lastKnownWriteTime": 1751311408,
+    "lastKnownWriteTime": 1751314554,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1751311408,
+    "last_content_update": 1751314554314,
     "read_only": false,
     "read_only_alternatives": []
 }
